@@ -1,7 +1,7 @@
 package floodgate
 
 import (
-	"bufio"
+	"io"
 	"log"
 	"net"
 	"path/filepath"
@@ -12,11 +12,23 @@ type Proxy struct {
 	Type    string
 	SrcAddr string
 	DstAddr string
-	Out     chan []byte
+	Out     chan io.ReadCloser
 	Timeout time.Duration
 
 	srcAbsoluteAddr string
 	listener        net.Listener
+}
+
+type ProxyReadCloser struct {
+	io.Reader
+	src net.Conn
+	dst net.Conn
+}
+
+func (p ProxyReadCloser) Close() error {
+	p.src.Close()
+	p.dst.Close()
+	return nil
 }
 
 func (f *Proxy) StartServer() error {
@@ -61,27 +73,14 @@ func (f *Proxy) Close() {
 }
 
 func (f *Proxy) connectAndProxy(srcConn net.Conn) {
-	defer srcConn.Close()
 	dstConn, err := net.DialTimeout("unix", f.DstAddr, f.Timeout)
 	if err != nil {
 		log.Fatalf("couldn't connect to %s: %s", f.DstAddr, err.Error())
 	}
-	defer dstConn.Close()
-
-	for {
-		br := bufio.NewReader(srcConn)
-		line, err := br.ReadBytes('\n')
-		if err != nil {
-			log.Println(err.Error())
-			return
-		}
-
-		f.Out <- line
-
-		_, err = dstConn.Write(line)
-		if err != nil {
-			log.Println(err.Error())
-			return
-		}
+	r := ProxyReadCloser{
+		Reader: io.TeeReader(srcConn, dstConn),
+		src:    srcConn,
+		dst:    dstConn,
 	}
+	f.Out <- r
 }

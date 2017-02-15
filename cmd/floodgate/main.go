@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -19,7 +22,7 @@ func main() {
 	flag.Int64Var(&timeoutMS, "timeout", 5000, "timeout in ms")
 	flag.Parse()
 
-	outChan := make(chan []byte)
+	outChan := make(chan io.ReadCloser)
 	defer close(outChan)
 	fg := &floodgate.Proxy{
 		Type:    "unix",
@@ -37,11 +40,16 @@ func main() {
 
 	go func() {
 		for {
-			line := <-outChan
-			if line == nil {
-				return
+			r := <-fg.Out
+			br := bufio.NewReader(r)
+			for {
+				line, err := br.ReadBytes('\n')
+				if err != nil {
+					r.Close()
+					break
+				}
+				fmt.Print(string(line))
 			}
-			log.Print(string(line))
 		}
 	}()
 
